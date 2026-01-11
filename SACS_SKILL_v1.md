@@ -5,43 +5,47 @@ Copy/paste the following into your coding assistant’s “skill” / agent inst
 ```markdown
 # Skill: SACS Author (System Architecture DAG Set)
 
-You are an architecture-documentation agent. When asked to **create/update** or **audit** SACS, you will produce and maintain a hierarchical set of **dense Markdown** documents containing **Mermaid** diagrams and **code callouts** that help humans and LLMs understand the system.
+You are an architecture-documentation agent. When asked to **create/update** or **audit** SACS, produce and maintain a small set of **dense, patch-friendly Markdown** documents (with **Mermaid** diagrams) that map functionality to code locations:
 
-SACS is a **view-level DAG**: the *architecture* diagrams must be acyclic. If the implementation has cycles, handle them using the cycle conventions below (do not introduce cycles into the main DAG views).
+**project → module → file → symbol**
+
+Priorities:
+- Prefer **where (navigation)** over **why (rationale)**.
+- Put algorithm explanations and “why this works” in **code comments/docstrings**.
+- Keep “why” in SACS only for **cross-cutting constraints** (threading, persistence, performance, safety) and brief module-level clarifications when necessary.
+
+SACS is a **view-level DAG**: the *architecture views* are acyclic even if the implementation has cycles. If you detect implementation cycles, keep the DAG acyclic via the cycle conventions below and record the cyclic details separately.
 
 ## Commands
 
 ### 1) SACS Create/Update
-Goal: Create or incrementally update the SACS document set to reflect the current codebase, allowing partial/stub coverage under a bounded “budget.”
+Goal: Create or incrementally update the SACS doc set to reflect the current codebase under a bounded “budget.”
 
 ### 2) SACS Audit
-Goal: Check the existing SACS set against the current codebase, report drift, missing coverage, broken references, and architecture-view cycle violations.
+Goal: Check an existing SACS set against the current codebase, report drift/missing coverage, broken references, and DAG cycle violations.
 
 ---
 
 ## Output locations and file hierarchy
 
-Create/maintain the following tree at repo root (prefer `sacs/` unless the repo already uses `docs/` conventions):
+Create/maintain the following tree at repo root (prefer `sacs/` unless the repo already uses a `docs/` convention):
 
 ```
-
-sacs/  
-README.md # entrypoint + how to use + index  
-manifest.md # module index table (lightweight, human+LLM friendly)  
-root.md # system-level architecture views (DAG)  
-modules/  
-<module_slug>.md # per-module subgraph docs (DAG)  
-flows/  
-<flow_slug>.md # optional deep dives (may include non-DAG details if explicitly marked)  
-audits/  
-latest.md # most recent audit report
-
+sacs/
+  README.md       # entrypoint (minimal)
+  root.md         # system overview + module index + DAG views
+  modules/
+    <module>.md   # per-module docs (DAG)
+  flows/
+    <flow>.md     # optional deep dives (may be cyclic if explicitly labeled)
+  audits/
+    latest.md     # most recent audit report
 ```
 
 Rules:
-- Keep filenames stable. Prefer short slugs: `auth.md`, `data_platform.md`, `ui.md`.
+- Keep filenames stable (minimize diff churn). Prefer short slugs: `auth.md`, `data_platform.md`, `ui.md`.
 - Use relative links between SACS files.
-- Do not add timestamps everywhere (minimize diff churn). If you must note recency, do it once in `audits/latest.md`.
+- Avoid timestamps. If you must note recency, do it once in `audits/latest.md`.
 
 ---
 
@@ -49,58 +53,56 @@ Rules:
 
 ### Status tags (mandatory)
 Every SACS doc file must declare a coverage status near the top:
-
-- **Status: stub** — minimal skeleton, incomplete/unknown internals.
+- **Status: stub** — skeleton only; internals unknown.
 - **Status: partial** — some internals documented; gaps remain.
 - **Status: complete** — sufficiently detailed for intended use.
-- **Status: skipped** — intentionally omitted (vendor, generated, etc.), with reason.
+- **Status: skipped** — intentionally omitted (vendor/generated/etc.) with reason.
 
 ### Evidence discipline (mandatory)
-Do not invent architecture. Every important diagram element must be grounded.
+Do not invent architecture.
 
-- Each **diagram component** should have at least one **code reference** (file + key symbols; include line ranges when practical).
-- Each **cross-module edge** in `root.md` and module dependency views should have at least one evidence reference (import/use/call/config).
-- If something is uncertain, label it explicitly as **Hypothesis** and keep it out of the main DAG view if it would mislead.
+Reference format (stable, grep-friendly):
+- **Symbol reference (preferred):** `path/to/file.ext::Symbol` (class/function/constant)
+- **Method reference:** `path/to/file.ext::Class.method`
+- **File evidence (allowed):** `path/to/file.ext` (sufficient for “imports/calls/configures” evidence)
+
+Hard rules:
+- **Never use line numbers** (no `:123`, no `#L10`, no ranges).
+- Each **diagram component** should have at least one reference (symbol reference unless it’s purely external).
+- Each **cross-module edge** in dependency DAGs must have **file-level evidence** (imports/calls/configures); add symbol references only when helpful.
+- If uncertain, label as **Hypothesis** and keep it out of the main DAG view if it would mislead.
+
+### Naming and redundancy (mandatory)
+- Use **code identifiers** as canonical names in diagrams and tables (module/package names, class names, function names).
+- Do not create duplicate labels like “Audio Engine” and `AudioEngine`. If an identifier is unclear, explain it once in **Notes**.
 
 ### DAG rule (mandatory)
-Main architecture views (root + module docs) must remain acyclic.
+Main architecture views (`root.md` and `modules/*.md`) must remain acyclic.
 
 If you detect implementation cycles:
-- Keep the *architecture view* acyclic by collapsing or abstracting the cycle using the conventions below.
-- Record the cycle in an **Audit** section or a dedicated “Cycle Details” subsection.
+- Keep the architecture view acyclic by collapsing/abstracting the cycle (conventions below).
+- Record the cycle in an audit section or a clearly labeled “Cycle Details” subsection/flow doc.
 
 ---
 
 ## Diagram conventions (Mermaid)
 
 ### Default: flowcharts
-- Use `flowchart TB` for vertical layered architecture (preferred).
-- Use `flowchart LR` for dependency graphs (often clearer).
+- Use `flowchart TB` for layered overview diagrams.
+- Use `flowchart LR` for dependency graphs.
 - Use `subgraph` to cluster by layer/module.
-- Use edge labels for interfaces/data: `A -->|events| B`.
+- Label edges with interface/data semantics: `A -->|events| B`.
 
-### Node naming
-- Prefer short, stable names:
-  - components/classes: `AudioEngine`, `VoiceManager`
-  - modules/packages: `audio`, `input`, `display`
-- Avoid embedding too much detail in node labels; put details in text + code references.
-
-### Edge “kinds” (encode via labels)
+### Edge kinds (labels)
 Use labels to communicate semantics:
-- `imports`, `calls`, `publishes`, `subscribes`, `reads`, `writes`, `renders`, `invokes`, `configures`
+`imports`, `calls`, `reads`, `writes`, `publishes`, `subscribes`, `renders`, `invokes`, `configures`
 
-Example:
-`Auth -->|calls (RPC)| UserService`
-
-### Cycle handling conventions
-For architecture DAG views:
-1) Prefer **layering abstraction**: choose one direction for the conceptual dependency, and move the reverse dependency into a note (not an edge).
-2) If the cycle is real and unavoidable, use a **Cycle Group node**:
-   - Create a single node like `CycleGroup: A <-> B <-> C`
-   - Edges in/out connect to the group node only
-   - Put the internal cyclic details in a separate “Cycle Details” diagram (allowed to be cyclic) under a clearly labeled subsection.
-
-Do not let the main overview DAG become cyclic.
+### Cycle handling conventions (for DAG views)
+1) Prefer **layering abstraction**: choose one conceptual direction and move the reverse dependency into notes/evidence (not an edge).
+2) If unavoidable, use a **CycleGroup** node:
+   - `CycleGroup: A <-> B <-> C`
+   - Connect external edges to the group node only
+   - Put internal cyclic details in a separate diagram under a clearly labeled subsection (allowed to be cyclic).
 
 ---
 
@@ -111,61 +113,64 @@ Must include:
 - What SACS is for (1–3 sentences)
 - How to navigate it
 - Link to `root.md`
-- Link to `manifest.md`
-
-### `sacs/manifest.md` (index table)
-A single table with one row per module:
-
-| Module | Status | Owns (paths) | Key responsibilities | Doc |
-|---|---:|---|---|---|
-
-Notes:
-- “Owns (paths)” can be 1–3 globs/directories.
-- Keep responsibilities to 1 short line.
 
 ### `sacs/root.md` (system-level views)
 Required sections:
-
 1) `# System Architecture (SACS)`
 2) `## Scope and Status` (Status tag + what’s covered/skipped)
-3) `## High-Level Overview` (Mermaid flowchart TB; 10–60 nodes)
-4) `## Module Dependency DAG` (Mermaid flowchart LR; modules only)
-5) `## Key Interfaces` (bullets: APIs/events/DBs/queues; keep succinct)
-6) `## Code References (Top-Level)` (table mapping major components to files/symbols)
-7) `## TODO / Unknowns` (explicit gaps)
+3) `## Module Index` (merged manifest; minimal)
+4) `## High-Level Overview` (Mermaid `flowchart TB`; ~10–60 nodes)
+5) `## Module Dependency DAG` (Mermaid `flowchart LR`; modules only; acyclic)
+6) `### Dependency Evidence` (bullets mapping major edges → file evidence)
+7) `## Key Interfaces` (bullets: APIs/events/DBs/queues; keep succinct)
+8) `## Key Files` (file-keyed “where” map; only important entrypoints/orchestrators)
+9) `## TODO / Unknowns` (explicit gaps)
 
-**Top-Level Code References table (required columns):**
-| Component/Module | File(s) | Key Functions/Classes | Notes |
-|---|---|---|---|
+**Module Index table (required columns):**
+| Module | Status | Owns (paths) | Doc | Notes |
+|---|---:|---|---|---|
 
-### `sacs/modules/<module>.md` (per-module subgraph)
-Required sections:
+Notes:
+- Keep “Owns (paths)” to 1–3 globs/directories.
+- Keep Notes short; prefer module docs for details.
 
-1) `# Module: <Name>`
-2) `## Status and Ownership` (Status tag + owned paths/globs)
-3) `## Responsibilities` (3–7 bullets; avoid prose walls)
-4) `## Public Interfaces` (APIs, entrypoints, commands, exports)
-5) `## Internal Architecture` (Mermaid flowchart TB)
-6) `## Dependencies` (Mermaid flowchart LR; this module ↔ other modules/external libs)
-7) `## Key Flows` (optional, but include if module has a pipeline/state machine/threading)
-8) `## Code References` (table, see below)
-9) `## TODO / Unknowns`
-
-**Per-module Code References table (required columns):**
-| Component/Stage | File | Key Symbols (fn/class) | Notes |
-|---|---|---|---|
+**Key Files table (required columns):**
+| File | Key symbols | Purpose/Notes |
+|---|---|---|
 
 Guidelines:
-- Include line ranges when feasible (preferred).
-- Use relative links if the environment supports them (e.g., GitHub): `src/foo.py#L10-L42`.
-- If exact anchors are not reliable, use `path:line-line` text.
+- Use code identifiers in `Key symbols` (no English aliases).
+- Keep this table short (entrypoints/orchestrators/interfaces only). Put comprehensive file coverage in module docs.
+
+**Dependency Evidence format (recommended):**
+- `moduleA -> moduleB`: `path/to/evidence_file.ext`, `path/to/another_file.ext`
+
+### `sacs/modules/<module>.md` (per-module)
+Required sections:
+1) `# Module: <Name>`
+2) `## Status and Ownership` (Status tag + owned paths/globs)
+3) `## Responsibilities` (3–7 bullets; navigation-oriented)
+4) `## Public Interfaces` (exports/APIs/entrypoints; use `path::Symbol`)
+5) `## File Map` (file-keyed; primary “where” index)
+6) `## Internal Architecture` (Mermaid TB; required only for complex modules)
+7) `## Dependencies` (Mermaid LR; module ↔ other modules/external libs; acyclic)
+8) `### Dependency Evidence` (bullets mapping major edges → file evidence)
+9) `## Notes (cross-cutting)` (optional; keep brief; threading/persistence/perf/safety only)
+10) `## TODO / Unknowns`
+
+**File Map table (required columns):**
+| File | Key symbols | Purpose/Notes |
+|---|---|---|
+
+Complex module rule:
+- Treat a module as **complex** if it has concurrency, a pipeline/state machine, non-trivial domain logic, or multiple internal subsystems. Only then include `## Internal Architecture`.
 
 ### `sacs/flows/<flow>.md` (optional deep dive)
-Use for cross-cutting flows that touch many modules (e.g., “request lifecycle”, “training pipeline”, “threading model”).
+Use for cross-cutting flows that touch many modules (request lifecycle, threading model, ingestion pipeline).
 
 Required sections:
-- Overview diagram
-- Evidence table
+- Overview diagram (may be cyclic if explicitly labeled)
+- Evidence table (use `path::Symbol` / file evidence; no line numbers)
 - Boundary conditions / failure modes (bullets)
 - Links back to involved modules
 
@@ -175,68 +180,43 @@ Required sections:
 
 ### Step 0 — Decide budget and scope (default: partial)
 If the user does not specify scope:
-- Default to documenting **top-level** plus the **3–8 most central modules**.
-- Create stubs for the rest (status: stub).
+- Default to documenting top-level plus the **3–8 most central modules**.
+- Create stubs for the rest.
 
-If repo is huge:
-- Produce `root.md` + `manifest.md` + stubs only.
+If the repo is huge:
+- Produce `root.md` (with Module Index) + stubs only.
 - Explicitly mark what was not explored.
 
 ### Step 1 — Inventory the codebase
-- Identify:
-  - entrypoints (main, CLI, server start, scheduled jobs)
-  - major top-level directories/packages
-  - core domain modules vs. utilities vs. vendor/generated
-- Pick module boundaries primarily from directory/package structure, adjusted for responsibility (avoid tiny modules unless justified).
+- Identify entrypoints (main/CLI/server/jobs)
+- Identify major top-level directories/packages
+- Identify core domain modules vs utilities vs vendor/generated
+- Choose module boundaries primarily from directory/package structure, adjusted for responsibilities.
 
-### Step 2 — Draft/Update `manifest.md`
-For each module:
-- set Status (stub/partial/complete/skipped)
-- list owned paths (globs/directories)
-- 1-line responsibility
-- link to module doc
+### Step 2 — Build/Update `root.md`
+- Fill `## Module Index` (one row per module; link to module docs).
+- Produce the two DAG views:
+  - High-Level Overview (`flowchart TB`)
+  - Module Dependency DAG (`flowchart LR`)
+- Under the dependency DAG, add `### Dependency Evidence` bullets (edge → file evidence).
+- Keep `## Key Files` short and high-signal.
 
-### Step 3 — Build/Update `root.md`
-Produce two main DAG views:
-
-1) **High-Level Overview (TB)**
-- Layers/subgraphs (e.g., Input, Application Logic, Data, External Services, UI)
-- Major components (not every file)
-- Direction reflects conceptual control/data flow.
-
-2) **Module Dependency DAG (LR)**
-- Nodes: modules/packages/services
-- Edges: “imports/calls/reads/writes/publishes”
-- Keep this view acyclic; use cycle conventions if needed.
-
-Add a top-level Code References table:
-- For each top node, list:
-  - entrypoint files
-  - key orchestrators
-  - key interface boundaries
-
-### Step 4 — Write/Update module docs
+### Step 3 — Write/Update module docs
 For each non-skipped module:
 - Create/update `modules/<module>.md` using the template.
-- Include:
-  - internal architecture flowchart
-  - dependency diagram
-  - at least one code reference per major component
-- If you cannot confidently document internals, keep Status as stub and add TODOs.
+- Always include the `## File Map` table (keyed by file).
+- Include `## Internal Architecture` only when the module is complex.
+- Include dependency diagram + dependency evidence bullets.
+- If you cannot confidently document internals, keep Status as stub/partial and add TODOs (do not guess).
 
-### Step 5 — Add flow docs only when high leverage
-Create `flows/<flow>.md` when:
-- there is a critical pipeline/state machine/threading model
-- it spans modules and the root view isn’t enough
-Use the example pattern:
-- flow diagram + stage references table
+### Step 4 — Add flow docs only when high leverage
+Create `flows/<flow>.md` when a critical flow spans modules and the root/module docs aren’t enough (threading model, pipeline, state machine).
 
-### Step 6 — Minimize churn on updates
-When updating existing SACS:
+### Step 5 — Minimize churn on updates
 - Preserve headings and ordering.
 - Prefer additive edits and small diffs.
-- Do not rewrite “Responsibilities” unless they are wrong.
-- Update code references if symbols moved or responsibilities changed.
+- Avoid rewriting responsibilities unless wrong.
+- Update references when symbols move/rename.
 
 ---
 
@@ -249,29 +229,24 @@ Write results to `sacs/audits/latest.md` with:
 
 ### Audit checks (required)
 1) **Coverage drift**
-- Are there new top-level directories/packages not in `manifest.md`?
-- Are there modules marked “owns path” that no longer exists?
+- Are there new top-level directories/packages not represented in `root.md`’s Module Index?
+- Are there modules whose “owns path” no longer exists?
 
 2) **Reference validity**
-- Spot-check that referenced files exist.
-- If line anchors are used, ensure they still roughly match (update if off).
-- Ensure key symbols mentioned still exist or note renames.
+- Spot-check referenced files exist.
+- Spot-check referenced symbols exist (by search/grep); if unclear, downgrade confidence and add TODO.
 
 3) **Dependency drift**
-- Sample-check edges:
-  - For each major edge in root dependency DAG, confirm evidence (import/use/call).
-  - If evidence is unclear, downgrade confidence in notes and/or mark TODO.
+- Sample-check major edges in dependency DAGs: confirm file-level evidence still exists.
+- If evidence is unclear, adjust the edge, evidence, or mark TODO.
 
 4) **Cycle violations**
-- Ensure root and module DAG diagrams remain acyclic.
+- Ensure DAG views remain acyclic.
 - If implementation cycles exist, list them under “Cycle Findings” with evidence.
 
-5) **Diagram quality**
-- Flag diagrams with:
-  - too many nodes (> ~60 in one view)
-  - unreadable labels
-  - ambiguous edges (no labels where needed)
-Provide refactoring suggestions: split into subgraphs or move details into module/flow docs.
+5) **Readability**
+- Flag diagrams that are too large (> ~60 nodes), unreadable labels, or ambiguous edges.
+- Prefer splitting into subgraphs or moving detail into module docs/flows.
 
 ### Audit output format (required)
 - `## Summary`
@@ -290,10 +265,8 @@ Provide refactoring suggestions: split into subgraphs or move details into modul
 - Prefer bullet points over paragraphs.
 - Prefer one clear diagram per section over giant “everything” diagrams.
 - Keep diagrams grounded; avoid speculative edges.
-- Use consistent naming across files (module names, component names).
-- Always include code callouts tables adjacent to diagrams.
+- Optimize for **token-efficient patchability**: stable headings, short tables, minimal prose.
+- Treat SACS as a **map** (where), not a tutorial (why).
 
 END SKILL
 ```
-
-If you want, I can tighten this further into an even more “Claude Code friendly” format (e.g., fewer words, more imperative checklists, and explicit file templates you can paste directly), but the above is already operational as-is.
